@@ -1,0 +1,133 @@
+blueprint:
+  name: Dimmer Hold Auto Direction
+  description: >
+    Hold button to dim a light.
+    Direction is chosen automatically:
+      - 0-49% = brighten
+      - 50-100% = dim
+
+  domain: automation
+
+  input:
+    trigger_event:
+      name: Trigger Event Entity
+      selector:
+        entity:
+          domain:
+            - event
+
+    light_entity:
+      name: Light
+      selector:
+        entity:
+          domain:
+            - light
+
+    hold_event_type:
+      name: Hold Event Type
+      default: KeyHeldDown
+      selector:
+        text:
+
+    startup_brightness:
+      name: Startup Brightness
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+
+    brightness_step:
+      name: Brightness Step
+      default: 4
+      selector:
+        number:
+          min: 1
+          max: 25
+          unit_of_measurement: "%"
+
+    transition_time:
+      name: Transition Time
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.1
+          unit_of_measurement: s
+
+alias: Dimmer Hold Auto Direction
+
+variables:
+  trigger_event_entity: !input trigger_event
+  light_target: !input light_entity
+  hold_type: !input hold_event_type
+  step_value: !input brightness_step
+
+  current_brightness: >
+    {{ state_attr(light_target, 'brightness') | int(0) }}
+
+  brightness_percent: >
+    {{ (current_brightness * 100 / 255) | round(0) }}
+
+trigger:
+  - platform: state
+    entity_id: !input trigger_event
+    attribute: event_type
+    to: !input hold_event_type
+
+condition: []
+
+action:
+
+  #
+  # Si la lumière est éteinte, l'allumer à la luminosité de départ
+  #
+  - choose:
+      - conditions:
+          - condition: state
+            entity_id: !input light_entity
+            state: "off"
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: !input light_entity
+            data:
+              brightness_pct: !input startup_brightness
+              transition: !input transition_time
+
+  #
+  # Déterminer le sens du dimming une seule fois au début du hold
+  #
+  - variables:
+      dim_step: >
+        {% if is_state(light_target, 'off') %}
+          {{ step_value | int }}
+        {% elif brightness_percent < 50 %}
+          {{ step_value | int }}
+        {% else %}
+          {{ (step_value | int) * -1 }}
+        {% endif %}
+
+  #
+  # Boucle tant que le bouton est maintenu
+  #
+  - repeat:
+      while:
+        - condition: template
+          value_template: >
+            {{ state_attr(trigger_event_entity, 'event_type') == hold_type }}
+
+      sequence:
+
+        - service: light.turn_on
+          target:
+            entity_id: !input light_entity
+          data:
+            brightness_step_pct: "{{ dim_step }}"
+
+        - delay:
+            milliseconds: 150
+
+mode: single
