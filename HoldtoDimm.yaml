@@ -1,5 +1,5 @@
 blueprint:
-  name: Dimmer Hold Toggle Direction
+  name: Hold to Dimm
   description: >
     Maintenir un bouton pour varier l'intensité d'une lumière.
     Chaque maintien alterne entre monter et descendre l'intensité.
