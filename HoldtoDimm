@@ -1,0 +1,223 @@
+blueprint:
+  name: Dimmer Hold Toggle Direction
+  description: >
+    Maintenir un bouton pour varier l'intensité d'une lumière.
+    Chaque maintien alterne entre monter et descendre l'intensité.
+ 
+  domain: automation
+ 
+  input:
+    trigger_event:
+      name: Trigger Event Entity
+      selector:
+        entity:
+          domain:
+          - event
+ 
+    light_entity:
+      name: Light
+      selector:
+        entity:
+          domain:
+          - light
+ 
+    direction_helper:
+      name: Direction Toggle Helper
+      selector:
+        entity:
+          domain:
+          - input_boolean
+ 
+    hold_event_type:
+      name: Hold Event Type
+      default: KeyHeldDown
+      selector:
+        text:
+ 
+    startup_brightness:
+      name: Startup Brightness
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+ 
+    brightness_step:
+      name: Brightness Step
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 25
+          unit_of_measurement: "%"
+ 
+    transition_time:
+      name: Transition Time
+      default: 0.2
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.1
+          unit_of_measurement: s
+ 
+    step_delay:
+      name: Step Delay
+      description: >
+        Délai entre chaque pas de variation pendant le maintien.
+        Plus bas = plus fluide mais plus de charge sur le bus/réseau.
+      default: 50
+      selector:
+        number:
+          min: 50
+          max: 500
+          step: 10
+          unit_of_measurement: ms
+ 
+    max_hold_duration:
+      name: Max Hold Duration (Safety Timeout)
+      description: >
+        Durée maximale de la boucle de variation, même si l'événement
+        de relâchement n'est jamais reçu (pile de la télécommande à plat,
+        perte réseau, etc.). Évite une automatisation bloquée en boucle
+        indéfiniment.
+      default: 15
+      selector:
+        number:
+          min: 2
+          max: 60
+          unit_of_measurement: s
+ 
+alias: Dimmer Hold Toggle Direction
+ 
+variables:
+  trigger_event_entity: !input trigger_event
+  light_target: !input light_entity
+  direction_toggle: !input direction_helper
+  hold_type: !input hold_event_type
+  step_value: !input brightness_step
+  hold_max_seconds: !input max_hold_duration
+  hold_start_ts: "{{ now().timestamp() }}"
+ 
+trigger:
+  - trigger: state
+    entity_id: !input trigger_event
+    attribute: event_type
+    to: !input hold_event_type
+ 
+condition: []
+ 
+actions:
+ 
+  - choose:
+ 
+      #
+      # DIM DOWN
+      #
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ is_state(direction_toggle, 'off') }}
+ 
+        sequence:
+ 
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ is_state(light_target, 'off') }}
+ 
+                sequence:
+                  - action: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      brightness_pct: !input startup_brightness
+                      transition: !input transition_time
+ 
+          - repeat:
+              while:
+                - condition: template
+                  value_template: >
+                    {{
+                      state_attr(trigger_event_entity, 'event_type') == hold_type
+                      and (now().timestamp() - hold_start_ts) < (hold_max_seconds | float)
+                    }}
+              sequence:
+ 
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: >
+                            {{ (state_attr(light_target, 'brightness') | int(0)) <= 3 }}
+                      sequence:
+                        - action: light.turn_on
+                          target:
+                            entity_id: !input light_entity
+                          data:
+                            brightness_pct: 1
+ 
+                    - conditions: []
+                      sequence:
+                        - action: light.turn_on
+                          target:
+                            entity_id: !input light_entity
+                          data:
+                            brightness_step_pct: >
+                              {{ (step_value | int) * -1 }}
+ 
+                - delay:
+                    milliseconds: !input step_delay
+ 
+          - action: input_boolean.turn_on
+            target:
+              entity_id: !input direction_helper
+ 
+      #
+      # DIM UP
+      #
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ is_state(direction_toggle, 'on') }}
+ 
+        sequence:
+ 
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ is_state(light_target, 'off') }}
+ 
+                sequence:
+                  - action: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      brightness_pct: !input startup_brightness
+                      transition: !input transition_time
+ 
+          - repeat:
+              while:
+                - condition: template
+                  value_template: >
+                    {{
+                      state_attr(trigger_event_entity, 'event_type') == hold_type
+                      and (now().timestamp() - hold_start_ts) < (hold_max_seconds | float)
+                    }}
+              sequence:
+                - action: light.turn_on
+                  target:
+                    entity_id: !input light_entity
+                  data:
+                    brightness_step_pct: !input brightness_step
+ 
+                - delay:
+                    milliseconds: !input step_delay
+ 
+          - action: input_boolean.turn_off
+            target:
+              entity_id: !input direction_helper
+ 
+mode: single
